@@ -1,0 +1,143 @@
+# copyright ############################### #
+# This file is part of the Xcoll Package.   #
+#                                           #
+# ######################################### #
+
+from contextlib import contextmanager
+
+import xobjects as xo
+import xtrack as xt
+
+from .base import BaseCollimator, BaseCrystal
+from ..general import _pkg_root
+from ..scattering_routines.geant4 import Geant4Engine, track_pre, track_core, track_post
+from ..materials import _DEFAULT_MATERIAL, _resolve_material
+
+class BdsimElement(BaseCollimator):
+    _xofields = BaseCollimator._xofields | {
+        'geant4_id': xo.String,
+        'length_front': xo.Float64,   # Hard-coded to correct 250nm margin in BDSIM
+        'length_back':  xo.Float64
+    }
+
+    isthick = True
+    allow_track = True
+    iscollective = True
+    behaves_like_drift = True
+    allow_rot_and_shift = False
+    allow_loss_refinement = True
+    skip_in_loss_location_refinement = True
+    allow_no_prebuilt_kernel = True
+
+    _depends_on = [BaseCollimator, Geant4Engine]
+
+    _extra_c_sources = [
+        _pkg_root.joinpath('beam_elements','elements_src','geant4_collimator.h')
+    ]
+
+    _noexpr_fields         = {*BaseCollimator._noexpr_fields, 'material'}
+    _skip_in_to_dict       = BaseCollimator._skip_in_to_dict
+    _store_in_to_dict      = [*BaseCollimator._store_in_to_dict, 'material']
+    _internal_record_class = BaseCollimator._internal_record_class
+    _allowed_fields_when_frozen = BaseCollimator._allowed_fields_when_frozen
+
+    def __new__(cls, *args, **kwargs):
+        with cls._in_constructor():
+            self = super().__new__(cls, *args, **kwargs)
+        return self
+
+    def __init__(self, **kwargs):
+        import xcoll as xc
+        if xc.geant4.engine.is_running():
+            raise ValueError('Cannot create Geant4Collimator while engine is running.')
+        with self.__class__._in_constructor(self):
+            to_assign = {}
+            if '_xobject' not in kwargs:
+                kwargs.setdefault('geant4_id', ''.ljust(16))
+                to_assign['name'] = xc.geant4.engine._get_new_element_name()
+                to_assign['material'] = kwargs.pop('material', None)
+                kwargs['_material'] = _DEFAULT_MATERIAL
+            super().__init__(**kwargs)
+            for key, val in to_assign.items():
+                setattr(self, key, val)
+            if not hasattr(self, '_equivalent_drift'):
+                self._equivalent_drift = xt.Drift(length=self.length)
+                self._equivalent_drift.model = 'exact'
+            self.length_front = 250e-9
+            self.length_back = -250e-9
+
+    @property
+    def angle(self):
+        return BaseCollimator.angle.fget(self)
+
+    @angle.setter
+    def angle(self, val):
+        if hasattr(val, '__iter__') and len(val) == 2 and val[0] != val[1]:
+            raise ValueError('The Geant4 scattering engine does not '
+                           + 'support unequal jaw rotation angles')
+        BaseCollimator.angle.fset(self, val)
+
+    @property
+    def material(self):
+        if self._material != _DEFAULT_MATERIAL:
+            return self._material
+
+    @material.setter
+    def material(self, material):
+        material = _resolve_material(material, ref='geant4')
+        if self.material != material:
+            self._material = material
+
+    def enable_scattering(self):
+        import xcoll as xc
+        xc.geant4.interface.assert_environment_ready()
+        if not xc.geant4.engine.is_running():
+            raise RuntimeError("Geant4 engine is not running.")
+        super().enable_scattering()
+
+    def track(self, part):
+        if track_pre(self, part):
+            super().track(part)
+            track_core(self, part)
+            track_post(self, part)
+        else:
+            self._drift(part)
+
+    def _drift(self, particles, length=None):
+        if length is None:
+            length = self.length
+        if length != self.length:
+            old_length = self._equivalent_drift.length
+            self._equivalent_drift.length = length
+        self._equivalent_drift.track(particles)
+        if length != self.length:
+            self._equivalent_drift.length = old_length
+
+    def __setattr__(self, name, value):
+        import xcoll as xc
+        if name not in self._allowed_fields_when_frozen \
+        and xc.geant4.engine.is_running():
+            raise ValueError('Engine is running; Geant4Collimator is frozen.')
+        super().__setattr__(name, value)
+
+    @classmethod
+    @contextmanager
+    def _in_constructor(cls, self=None):
+        original_setattr = cls.__setattr__
+        if self is not None:
+            self._being_constructed_ = True
+        def new_setattr(self, *args, **kwargs):
+            return super().__setattr__( *args, **kwargs)
+        cls.__setattr__ = new_setattr
+        try:
+            yield
+        finally:
+            cls.__setattr__ = original_setattr
+            if self is not None:
+                self._being_constructed_ = False
+
+    def _being_constructed(self):
+        if hasattr(self, '_being_constructed_'):
+            return self._being_constructed_
+        else:
+            return False
