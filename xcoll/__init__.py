@@ -9,10 +9,11 @@ from .beam_elements import (BlackAbsorber, BlackCrystal, TransparentCollimator, 
                             EverestBlock, EverestCollimator, EverestCrystal, Geant4Collimator,
                             Geant4CollimatorTip, Geant4Crystal, FlukaCollimator, FlukaCrystal,
                             BlowUp, EmittanceMonitor, collimator_classes, crystal_classes,
-                            element_classes)
+                            element_classes, BdsimElement)
 from .materials import Material, RefMaterial
 from .scattering_routines.fluka import FlukaPrototype, FlukaAssembly, create_generic_assembly
 from .scattering_routines.geant4 import Geant4Engine
+from .scattering_routines.bdsim import BdsimEngine
 from .colldb import CollimatorDatabase
 from .interaction_record import InteractionRecord
 from .rf_sweep import RFSweep, prepare_rf_sweep
@@ -34,6 +35,10 @@ fluka = _FlukaWrapper()
 # Initialise Geant4 environment
 from .scattering_routines.geant4.wrapper import Geant4Wrapper as _Geant4Wrapper
 geant4 = _Geant4Wrapper()
+
+# Initialise BDSIM environment
+from .scattering_routines.bdsim.wrapper import BdsimWrapper as _BdsimWrapper
+bdsim = _BdsimWrapper()
 
 # print("If you use Xcoll in your simulations, please cite us :-)")
 # print(citation)

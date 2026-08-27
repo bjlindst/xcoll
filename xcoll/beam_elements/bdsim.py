@@ -10,14 +10,15 @@ import xtrack as xt
 
 from .base import BaseCollimator, BaseCrystal
 from ..general import _pkg_root
-from ..scattering_routines.geant4 import Geant4Engine, track_pre, track_core, track_post
+from ..scattering_routines.bdsim import BdsimEngine, track_pre, track_core, track_post
 from ..materials import _DEFAULT_MATERIAL, _resolve_material
+from ..constants import HIT_ON_GEANT4, HIT_ON_GEANT4_SEC, SECONDARY_PARTICLE
 
 class BdsimElement(BaseCollimator):
     _xofields = BaseCollimator._xofields | {
         'geant4_id': xo.String,
         'length_front': xo.Float64,   # Hard-coded to correct 250nm margin in BDSIM
-        'length_back':  xo.Float64
+        'length_back':  xo.Float64,
     }
 
     isthick = True
@@ -29,11 +30,11 @@ class BdsimElement(BaseCollimator):
     skip_in_loss_location_refinement = True
     allow_no_prebuilt_kernel = True
 
-    _depends_on = [BaseCollimator, Geant4Engine]
+    _depends_on = [BaseCollimator, BdsimEngine]
 
-    _extra_c_sources = [
-        _pkg_root.joinpath('beam_elements','elements_src','geant4_collimator.h')
-    ]
+    #_extra_c_sources = [
+    #    _pkg_root.joinpath('beam_elements','elements_src','geant4_collimator.h')
+    #]
 
     _noexpr_fields         = {*BaseCollimator._noexpr_fields, 'material'}
     _skip_in_to_dict       = BaseCollimator._skip_in_to_dict
@@ -48,13 +49,11 @@ class BdsimElement(BaseCollimator):
 
     def __init__(self, **kwargs):
         import xcoll as xc
-        if xc.geant4.engine.is_running():
-            raise ValueError('Cannot create Geant4Collimator while engine is running.')
         with self.__class__._in_constructor(self):
             to_assign = {}
             if '_xobject' not in kwargs:
                 kwargs.setdefault('geant4_id', ''.ljust(16))
-                to_assign['name'] = xc.geant4.engine._get_new_element_name()
+                to_assign['name'] = xc.bdsim.engine._get_new_element_name()
                 to_assign['material'] = kwargs.pop('material', None)
                 kwargs['_material'] = _DEFAULT_MATERIAL
             super().__init__(**kwargs)
@@ -90,14 +89,18 @@ class BdsimElement(BaseCollimator):
 
     def enable_scattering(self):
         import xcoll as xc
-        xc.geant4.interface.assert_environment_ready()
-        if not xc.geant4.engine.is_running():
+        xc.bdsim.interface.assert_environment_ready()
+        if not xc.bdsim.engine.is_running():
             raise RuntimeError("Geant4 engine is not running.")
         super().enable_scattering()
 
     def track(self, part):
         if track_pre(self, part):
-            super().track(part)
+            #super().track(part)
+            #track_core(self, part)
+            #track_post(self, part)
+            #part.state[part.state==1] = HIT_ON_GEANT4
+            #part.state[part.state==SECONDARY_PARTICLE] = HIT_ON_GEANT4_SEC
             track_core(self, part)
             track_post(self, part)
         else:
@@ -116,8 +119,8 @@ class BdsimElement(BaseCollimator):
     def __setattr__(self, name, value):
         import xcoll as xc
         if name not in self._allowed_fields_when_frozen \
-        and xc.geant4.engine.is_running():
-            raise ValueError('Engine is running; Geant4Collimator is frozen.')
+        and xc.bdsim.engine.is_running():
+            raise ValueError('Engine is running; Geant4Collimator is frozen.') # TODO how to deal with this? Can parameters be updated after installed?
         super().__setattr__(name, value)
 
     @classmethod
